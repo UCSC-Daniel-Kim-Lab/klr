@@ -1,3 +1,10 @@
+#' Collect the DNA sequences of all repeats in a list of (grouped) genes
+#'
+#' @param .data A data frame, with a column of gene names or ensg names
+#' @param overwrite A dataframe containing the repeat information for all genes
+#' @param genome A genome object compatible with Biostrings::getSeq
+#' @export
+#' @example genes %>% group_by(expression) %>% gather_repeats(overwrite, BSgenome.hsapiens.hg38)
 gather_repeats <- function(
     .data, overwrite, genome, id_col="gene", overwrite_name="name",
     regions=c("Promoter_Region", "Junction", "3UTR"), overwrite_filter=NULL
@@ -7,9 +14,6 @@ gather_repeats <- function(
     require("tidyr")
     require("GenomicRanges")
     require("Biostrings")
-
-    ## Name the regions
-    regions = setNames(regions, regions)
 
     ## Filter overwrite if requested
     if (class(overwrite_filter)!="NULL")
@@ -23,6 +27,16 @@ gather_repeats <- function(
         {
            stop("Stopping: bad filter") # Must use an expression for filtering
         }
+    }
+
+    ## Get the regions
+    if (is.null(regions))
+    {
+        regions = unqiue(overwrite$classification)
+        regions = setNames(regions, regions)
+    } else
+    {
+        regions = setNames(regions, regions)
     }
 
     ## Generate Sequences
@@ -73,78 +87,75 @@ gather_repeats <- function(
                 }
             )
         )
-    } else
-    { # Data is grouped - make seqs for each group
-        # Gather grouped data and grouping vars
-        groups = attr(.data, "groups")
-        cols = colnames(groups)[colnames(groups) != ".rows"]
+    }
+    # Data is grouped - make seqs for each group
+    # Gather grouped data and grouping vars
+    groups = attr(.data, "groups")
+    cols = colnames(groups)[colnames(groups) != ".rows"]
 
-        # Make a 'vectorized' version of the above
-        seqs_by_row = function(rows, o, g, id, o_id, regs)
-        {
-            # Get list of genes
-            genes = .data[rows, ][[id_col]]
+    # Make a 'vectorized' version of the above
+    seqs_by_row = function(rows, o, g, id, o_id, regs)
+    {
+        # Get list of genes
+        genes = .data[rows, ][[id_col]]
 
-            # Gather repeats
-            seqs = imap(
-                .x=regions, .f=function(rg, reg_name)
-                {
-                    # Make overwrite filter
-                    subsetter = expression(
-                        o[[o_id]] %in% genes
-                    )
+        # Gather repeats
+        seqs = imap(
+            .x=regions, .f=function(rg, reg_name)
+            {
+                # Make overwrite filter
+                subsetter = expression(
+                    o[[o_id]] %in% genes
+                )
 
-                    bed = o %>%
-                        filter(
-                            eval(subsetter),
-                            classification==reg
-                        ) %>%
-                        mutate(
-                            repStop = repStart+(-1*repLength), repStrand
-                        ) %>%
-                        unite(c(o_id, repName), col="name", sep='_') %>%
-                        unite(c(name, repStart), col="instance", sep='_', remove=F) %>%
-                        select(
-                            chr=chrom,
-                            start=repStart,
-                            stop=repStop,
-                            strand=repStrand,
-                            name=instance,
-                            gene_strand=genoStrand
-                        ) %>%
-                        filter(
-                            !str_ends(chr, "_alt")
-                        ) %>%
-                        distinct()
+                bed = o %>%
+                    filter(
+                        eval(subsetter),
+                        classification==reg
+                    ) %>%
+                    mutate(
+                        repStop = repStart+(-1*repLength), repStrand
+                    ) %>%
+                    unite(c(o_id, repName), col="name", sep='_') %>%
+                    unite(c(name, repStart), col="instance", sep='_', remove=F) %>%
+                    select(
+                        chr=chrom,
+                        start=repStart,
+                        stop=repStop,
+                        strand=repStrand,
+                        name=instance,
+                        gene_strand=genoStrand
+                    ) %>%
+                    filter(
+                        !str_ends(chr, "_alt")
+                    ) %>%
+                    distinct()
 
-                    fasta = Biostrings::getSeq(
-                        g, GenomicRanges::GRanges(bed)
-                    )
-                    names(fasta) = bed$name
+                fasta = Biostrings::getSeq(
+                    g, GenomicRanges::GRanges(bed)
+                )
+                names(fasta) = bed$name
 
-                    return(list("bed"=bed, "fasta"=fasta))
-                }
-            )
+                return(list("bed"=bed, "fasta"=fasta))
+            }
+        )
 
-            return(seqs)
-        }
-
-        ## Add DNAStringSet to the grouped data
-        groups$res = groups %>%
-            apply(MARGIN=1, FUN=function(row)
-                {seqs_by_row(row$.row, overwrite, genome, id_col, overwrite_name, regions)}
-            )
-        
-        ## Unnest results
-        groups = groups %>%
-            select(!c(".rows")) %>%
-            unnest_longer(res) %>%
-            rename(c(res_id="region", res="genome")) %>%
-            unnest_longer(genome) %>%
-            pivot_wider(names_from=genome_id, values_from=genome)
-
-        return(groups)
+        return(seqs)
     }
 
+    ## Add DNAStringSet to the grouped data
+    groups$res = groups %>%
+        apply(MARGIN=1, FUN=function(row)
+            {seqs_by_row(row$.row, overwrite, genome, id_col, overwrite_name, regions)}
+        )
+    
+    ## Unnest results
+    groups = groups %>%
+        select(!c(".rows")) %>%
+        unnest_longer(res) %>%
+        rename(c(res_id="region", res="genome")) %>%
+        unnest_longer(genome) %>%
+        pivot_wider(names_from=genome_id, values_from=genome)
 
+    return(groups)
 }
