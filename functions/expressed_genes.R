@@ -1,9 +1,17 @@
 #' Get a list of all expressed genes from Salmon Quantification
 #' 
 #' @param h5_path
+#' @param tx_to_gene
+#' @param id_col
+#' @param gene_col
+#' @param raw
+#' @param count_threshohld
+#' @param count_freq
+#' @param raw
+#' @param biotyper
 expressed_genes <- function(
     h5_path, tx_to_gene, id_col="gene", gene_col="V2"
-    raw=F, count_threshold=5, count_freq=0.75, biotyper=NULL,
+    raw=F, count_threshhold=5, count_freq=0.75, biotyper=NULL,
 )
 {
     biotypes = tx_to_gene %>%
@@ -33,7 +41,7 @@ expressed_genes <- function(
         counts = SummarizedExperiment::assays(se)$abundance
     }
 
-    genes = rownames(counts[(rowSums(counts >= count_threshold)) >= ncol(counts)*count_freq, ]) %>%
+    genes = rownames(counts[(rowSums(counts >= count_threshhold)) >= ncol(counts)*count_freq, ]) %>%
         merge(
             x=data.frame(gene=.), y=biotypes,
             by.x="gene", by.y=""

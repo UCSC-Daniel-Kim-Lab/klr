@@ -3,6 +3,10 @@
 #' @param .data A data frame, with a column of gene names or ensg names
 #' @param overwrite A dataframe containing the repeat information for all genes
 #' @param genome A genome object compatible with Biostrings::getSeq
+#' @param id_col Name of the column in your dataframe holding the gene names
+#' @param overwrite_name Name of teh column in your dataframe holding the gene names
+#' @param overwrite_filter An expression to subset the overwite table to the desired set of repeats
+#' @param regions The set of overwrite repeat classifications to include
 #' @export
 #' @example genes %>% group_by(expression) %>% gather_repeats(overwrite, BSgenome.hsapiens.hg38)
 gather_repeats <- function(
@@ -56,7 +60,7 @@ gather_repeats <- function(
                             classification=reg
                         ) %>%
                         dplyr::mutate(
-                            repStop = repStart+(-1*repLength), repStrand
+                            repStop = repStart+repLength, repStrand
                         ) %>%
                         tidyr::unite(c(overwrite_id, repName), col="name", sep='_') %>%
                         tidyr::unite(c(name, repStart), col="instance", sep='_', remove=F) %>%
