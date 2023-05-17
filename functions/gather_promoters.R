@@ -1,3 +1,12 @@
+#' Collect the promoter sequences from a set of genes using a BSgenome and an annotation
+#'
+#' @param genes The gene set as Ensemble Gene IDs. Can be a vector or data frame. Returns one list
+#'  of promoter sequences unless the data frame is grouped, in which case it returns one list for
+#'  each group.
+#' @param genome The BSGenome object from which to pull the DNA sequences
+#' @param gtf_file The genome annotation which contains the promoter regions.
+#' @param id_col The column containing the Gene IDs, if a data frame is used.
+#' @export
 gather_promoters <- function(genes, genome, gtf_file, id_col="gene")
 {
     if (is.null(gtf_path) | is.null(genome))

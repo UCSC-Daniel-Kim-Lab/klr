@@ -22,6 +22,9 @@ te_alone_annotation_levels <- c('LINE',
 te_alone_color_pal <- RColorBrewer::brewer.pal(n = 8, 'Dark2')[2:8]
 names(te_alone_color_pal) <- te_alone_annotation_levels
 
+#' The Official GGplot theme of the Daniel H. Kim Lab, UC Santa Cruz.
+#' 
+#' @export
 theme_kimlab <- function()
 {
     ggplot2::theme_set(
