@@ -26,11 +26,13 @@ save.manuscript.panel <- function(figure,
 	       plot = plot.in, device = cairo_pdf)
 }
 
-load.tximeta.object.list <- function(reference, output_data.dir = here::here('data/output_data')) {
+load.tximeta.object.list <- function(data_path,
+                                     type,
+                                     output_data.dir = here::here('data/output_data/final_datasets')) {
 	import::here(.from = "HDF5Array", loadHDF5SummarizedExperiment)
 	import::here(.from = "purrr", imap)
 
-	output_data_path <- file.path(output_data.dir, paste0(reference, '_quant'))
+	output_data_path <- file.path(output_data.dir, data_path, type)
 	message(output_data_path)
 
 	list.files(output_data_path) -> tximeta_obj.list
@@ -50,7 +52,7 @@ load.tximeta.object.list <- function(reference, output_data.dir = here::here('da
 									       paste0(sample, '_gene_h5_se')))
 
 
-			     if (reference == 'process.aware.salmon'){
+			     if (type == 'process.aware.salmon'){
 				     gxi.split <- loadHDF5SummarizedExperiment(dir=file.path(output_data_path,
 											     paste0(sample, '_gene_split_h5_se')))
 				     return(list('txi' = txi, 'gxi' = gxi, 'gxi.split' = gxi.split)) 
@@ -61,11 +63,14 @@ load.tximeta.object.list <- function(reference, output_data.dir = here::here('da
 	)
 }
 
-parse.tximeta.quant.metadata <- function(se_list, qc_data.dir = here::here('data/output_data/rna_qc')) { 
+parse.tximeta.quant.metadata <- function(se_list, 
+                                         qc_data.dir = here::here('data/output_data/rna_qc'),
+                                         extra_merge = NULL) { 
   
   import::here(.from = "purrr", imap) 
   import::here(.from = "tibble", lst)
   import::here(.from = 'readr', read_tsv)
+  # import::here(.from = 'SummarizedExperiment', colData)
   
   salmon_quant_cols_of_interest <-
     c("frag_length_mean", "frag_length_mean", "frag_length_sd",
@@ -85,7 +90,20 @@ parse.tximeta.quant.metadata <- function(se_list, qc_data.dir = here::here('data
 
 	  colnames(salmon_meta_tmp) <- paste0('salmon_', colnames(salmon_meta_tmp))
 
-	  salmon_meta_tmp %>% mutate(sample = names) -> salmon_meta_tmp
+	  salmon_meta_tmp %>% 
+	    mutate(sample = ifelse(grepl('_G', names),
+	                           str_split_fixed(names, '_G', 2)[, 1],
+	                           str_split_fixed(names, '_S', 2)[, 1])
+	           )-> salmon_meta_tmp
+	  
+	  if(!is.null(extra_merge)){
+	    salmon_meta_tmp %>% 
+	      merge(extra_merge, by = 'sample', all.x = T) %>% 
+	      mutate(sample = ifelse(is.na(name), 
+	                             sample,
+	                             name)) %>% 
+	      select(-name) -> salmon_meta_tmp
+	  }
 	  
 	  process_aware = F
 	  if(grepl('process.aware', project)) {process_aware = T}
@@ -94,21 +112,27 @@ parse.tximeta.quant.metadata <- function(se_list, qc_data.dir = here::here('data
 	  project <- sub('_ucsc.rmsk.salmon', '', project)
 	  project <- sub('_process.aware.salmon', '', project)
 	  
-	  star_meta_tmp_path <- Sys.glob(file.path(qc_data.dir,
-    					                     'star',
-    					                     paste0('multiqc.star.', project, '.*_data'),
-    					                     'multiqc_star.txt'))
-
-	  star_meta_tmp <- read_tsv(star_meta_tmp_path)
-
-	  colnames(star_meta_tmp) <- paste0('star_', colnames(star_meta_tmp))
-
-	  star_meta_tmp %>%
-	    dplyr::rename('sample' = star_Sample) %>%
-	    mutate(sample = sub('_second_pass_out', '', sample)) -> star_meta_tmp
-
-	  meta_out <- merge(star_meta_tmp, salmon_meta_tmp, by = 'sample')
+	  SummarizedExperiment::colData(data$txi)$names <- salmon_meta_tmp$sample
+	  SummarizedExperiment::colData(data$gxi)$names <- salmon_meta_tmp$sample
 	  
+	  rownames(SummarizedExperiment::colData(data$txi)) <- salmon_meta_tmp$sample
+	  rownames(SummarizedExperiment::colData(data$gxi)) <- salmon_meta_tmp$sample
+	  
+# 	  star_meta_tmp_path <- Sys.glob(file.path(qc_data.dir,
+#     					                     'star',
+#     					                     paste0('multiqc.star.', project, '.*_data'),
+#     					                     'multiqc_star.txt'))
+# 
+# 	  star_meta_tmp <- read_tsv(star_meta_tmp_path)
+# 
+# 	  colnames(star_meta_tmp) <- paste0('star_', colnames(star_meta_tmp))
+# 
+# 	  star_meta_tmp %>%
+# 	    dplyr::rename('sample' = star_Sample) %>%
+# 	    mutate(sample = sub('_second_pass_out', '', sample)) -> star_meta_tmp
+
+	  # meta_out <- merge(star_meta_tmp, salmon_meta_tmp, by = 'sample')
+	  meta_out <- salmon_meta_tmp
 	  if (process_aware == T){
 
 	    return(lst('txi' = data$txi, 
@@ -293,7 +317,7 @@ run.de.seq <- function(type = 'gxi', base_level = 'ctrl',
   scaled_quant_meta_for_de.df <- 
     input_se$quant_meta %>% 
     mutate(input_vol = as.numeric(input_vol),
-           condition = relevel(as.factor(condition), ref = base_level)) %>% 
+           condition = relevel(as.factor(diagnosis), ref = base_level)) %>% 
     mutate_if(is.numeric, ~scale(., center = T)) %>% 
     mutate_if(is.character, ~as.factor(.))
   
@@ -332,12 +356,12 @@ run.de.seq <- function(type = 'gxi', base_level = 'ctrl',
     input_set_dds_norm_counts.df %>% 
     rownames_to_column('ensg') %>% 
     gather(sample, count, -ensg) %>% 
-    merge(input_se$quant_meta %>% select(sample, age, condition), by = 'sample') %>% 
-    group_by(condition, ensg) %>% 
-    summarize(age_cor = cor(count, age, method = 'pearson')) %>% 
+    merge(input_se$quant_meta %>% select(sample, sample_sku_patient_age_at_collection, diagnosis), by = 'sample') %>% 
+    group_by(diagnosis, ensg) %>% 
+    summarize(age_cor = cor(count, sample_sku_patient_age_at_collection, method = 'pearson')) %>% 
     drop_na() %>% 
     filter(abs(age_cor) >= 0.70) %>% 
-    spread(condition, age_cor)
+    spread(diagnosis, age_cor)
   
   input_set_dds_vst_counts <-  as.data.frame(assay(vst(input_set_dds, blind = F)))
   
@@ -351,52 +375,52 @@ run.de.seq <- function(type = 'gxi', base_level = 'ctrl',
   
   coef_list <- tail(resultsNames(input_set_dds), n=2)
   
-  if (ref_type != 'ucsc.rmsk') { 
-    
-    covid_vs_ctrl <- 
-      lfcShrink(input_set_dds, coef = coef_list[[1]]) %>% 
-      as.data.frame() %>% 
-      rownames_to_column('ensg') %>% 
-      filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'covid')]$ensg,
-                          gencode_sex_filter.df$gene_id)) %>%
-      merge(rowRanges(input_se[[type]]) %>% as.data.frame(), by.x = 'ensg', by.y = 'gene_id') %>%
-      merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
-    
-    panc_vs_ctrl <- 
-      lfcShrink(input_set_dds, coef = coef_list[[2]]) %>% 
-      as.data.frame() %>% 
-      rownames_to_column('ensg') %>% 
-      filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'panc')]$ensg,
-                          gencode_sex_filter.df$gene_id)) %>% 
-      merge(rowRanges(input_se[[type]]) %>% as.data.frame(), by.x = 'ensg', by.y = 'gene_id') %>%
-      merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg') 
-  } else { 
-    
-    covid_vs_ctrl <- 
-      lfcShrink(input_set_dds, coef = coef_list[[1]]) %>% 
-      as.data.frame() %>% 
-      rownames_to_column('ensg') %>% 
-      filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'covid')]$ensg,
-                          gencode_sex_filter.df$gene_id)) %>%
-      merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
-    
-    panc_vs_ctrl <- 
-      lfcShrink(input_set_dds, coef = coef_list[[2]]) %>% 
-      as.data.frame() %>% 
-      rownames_to_column('ensg') %>% 
-      filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'panc')]$ensg,
-                          gencode_sex_filter.df$gene_id)) %>%
-      merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
-    
-  }
+  # if (ref_type != 'ucsc.rmsk') { 
+  #   
+  #   covid_vs_ctrl <- 
+  #     lfcShrink(input_set_dds, coef = coef_list[[1]]) %>% 
+  #     as.data.frame() %>% 
+  #     rownames_to_column('ensg') %>% 
+  #     filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'covid')]$ensg,
+  #                         gencode_sex_filter.df$gene_id)) %>%
+  #     merge(rowRanges(input_se[[type]]) %>% as.data.frame(), by.x = 'ensg', by.y = 'gene_id') %>%
+  #     merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
+  #   
+  #   panc_vs_ctrl <- 
+  #     lfcShrink(input_set_dds, coef = coef_list[[2]]) %>% 
+  #     as.data.frame() %>% 
+  #     rownames_to_column('ensg') %>% 
+  #     filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'panc')]$ensg,
+  #                         gencode_sex_filter.df$gene_id)) %>% 
+  #     merge(rowRanges(input_se[[type]]) %>% as.data.frame(), by.x = 'ensg', by.y = 'gene_id') %>%
+  #     merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg') 
+  # } else { 
+  #   
+  #   covid_vs_ctrl <- 
+  #     lfcShrink(input_set_dds, coef = coef_list[[1]]) %>% 
+  #     as.data.frame() %>% 
+  #     rownames_to_column('ensg') %>% 
+  #     filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'covid')]$ensg,
+  #                         gencode_sex_filter.df$gene_id)) %>%
+  #     merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
+  #   
+  #   panc_vs_ctrl <- 
+  #     lfcShrink(input_set_dds, coef = coef_list[[2]]) %>% 
+  #     as.data.frame() %>% 
+  #     rownames_to_column('ensg') %>% 
+  #     filter(!ensg %in% c(condition_aware_age_cor_filter[, c('ctrl', 'panc')]$ensg,
+  #                         gencode_sex_filter.df$gene_id)) %>%
+  #     merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
+  #   
+  # }
   
   lst('norm_counts.df' = input_set_dds_norm_counts.df,
       'vst_counts.df' = input_set_dds_vst_counts,
       'age_filter.df' = condition_aware_age_cor_filter,
       'sex_filter.df' = gencode_sex_filter.df,
       'dds_object' = input_set_dds,
-      'panc_vs_ctrl' = panc_vs_ctrl,
-      'covid_vs_ctrl' = covid_vs_ctrl,
+      # 'panc_vs_ctrl' = panc_vs_ctrl,
+      # 'covid_vs_ctrl' = covid_vs_ctrl,
       'scaled_quant_meta_for_de.df' = scaled_quant_meta_for_de.df)  
   
 }
@@ -419,9 +443,12 @@ run.de.seq.individual <- function(type = 'gxi', base_level = 'ctrl',
   scaled_quant_meta_for_de.df <- 
     input_se$quant_meta %>% 
     mutate(input_vol = as.numeric(input_vol),
-           condition = relevel(as.factor(condition), ref = base_level)) %>% 
+           condition = relevel(as.factor(diagnosis), ref = base_level)) %>% 
     mutate_if(is.numeric, ~scale(., center = T)) %>% 
-    mutate_if(is.character, ~as.factor(.))
+    mutate(across(where(is.character), ~replace_na(.x, 'none'))) %>% 
+    mutate_if(is.character, ~as.factor(.)) %>% 
+    remove_rownames() %>% 
+    column_to_rownames('sample')
   
   print(levels(scaled_quant_meta_for_de.df$condition))
   
@@ -465,6 +492,19 @@ run.de.seq.individual <- function(type = 'gxi', base_level = 'ctrl',
     
   }
   
+  # colnames(count_matrix.df) <-
+  #   rownames(scaled_quant_meta_for_de.df)
+  
+  # print(colnames(count_matrix.df))
+  
+  scaled_quant_meta_for_de.df <- 
+    scaled_quant_meta_for_de.df[match(colnames(count_matrix.df),
+                                      rownames(scaled_quant_meta_for_de.df)), ]
+  
+  # print(rownames(scaled_quant_meta_for_de.df))
+  
+  print(rownames(scaled_quant_meta_for_de.df) == colnames(count_matrix.df))
+  
   input_set_dds <- DESeqDataSetFromMatrix(countData = count_matrix.df, 
                                           colData = scaled_quant_meta_for_de.df, 
                                           design = dds_formula)
@@ -473,20 +513,20 @@ run.de.seq.individual <- function(type = 'gxi', base_level = 'ctrl',
   
   input_set_dds_norm_counts.df <- as.data.frame(counts(input_set_dds, normalized=T))
   
-  condition_aware_age_cor_filter <- 
-    input_set_dds_norm_counts.df %>% 
-    rownames_to_column('ensg') %>% 
-    gather(sample, count, -ensg) %>% 
-    merge(input_se$quant_meta %>% select(sample, age, condition), by = 'sample') %>% 
-    group_by(condition, ensg) %>% 
-    summarize(age_cor = cor(count, age, method = 'pearson')) %>% 
-    drop_na() %>% 
-    filter(abs(age_cor) >= 0.70) %>% 
-    spread(condition, age_cor)
+  # condition_aware_age_cor_filter <-
+  #   input_set_dds_norm_counts.df %>%
+  #   rownames_to_column('ensg') %>%
+  #   gather(sample, count, -ensg) %>%
+  #   merge(input_se$quant_meta %>% select(sample, diagnosis), by = 'sample') %>%
+  #   group_by(diagnosis, ensg) %>%
+  #   summarize(age_cor = cor(count, sample_sku_patient_age_at_collection, method = 'pearson')) %>%
+  #   drop_na() %>%
+  #   filter(abs(age_cor) >= 0.70) %>%
+  #   spread(diagnosis, age_cor)
   
   input_set_dds_vst_counts <- as.data.frame(assay(vst(input_set_dds, blind = F)))
   
-  de_filter <- rowSums(counts(input_set_dds, normalized=T) >= 10) >= ncol(input_set_dds_norm_counts.df)*0.75
+  de_filter <- rowSums(counts(input_set_dds, normalized=T) >= 10) >= ncol(input_set_dds_norm_counts.df)*0.95
   
   input_set_dds <- DESeq(input_set_dds[de_filter,])
   
@@ -508,9 +548,8 @@ run.de.seq.individual <- function(type = 'gxi', base_level = 'ctrl',
       # indiv comparisons return flipped values ?
       # mutate(log2FoldChange = -log2FoldChange) %>% 
       rownames_to_column('ensg') %>% 
-      filter(!ensg %in% c(condition_aware_age_cor_filter[, c(base_level, top_level)]$ensg,
-                          gencode_sex_filter.df$gene_id)) %>%
-      merge(rowRanges(input_se[[type]]) %>% as.data.frame(), by.x = 'ensg', by.y = 'gene_id') %>%
+      filter(!ensg %in% gencode_sex_filter.df$gene_id) %>%
+      # merge(rowRanges(input_se[[type]]) %>% as.data.frame(), by.x = 'ensg', by.y = 'gene_id') %>%
       merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
     
   } else if (ref_type == 'process.aware') {
@@ -530,22 +569,21 @@ run.de.seq.individual <- function(type = 'gxi', base_level = 'ctrl',
   } else { 
     
     message('ucsc.rmsk')
-    
+    # print(condition_aware_age_cor_filter)
     de_out <- 
       lfcShrink(input_set_dds, coef = coef_list[[1]]) %>% 
       as.data.frame() %>% 
       # indiv comparisons return flipped values ?
       # mutate(log2FoldChange = -log2FoldChange) %>% 
       rownames_to_column('ensg') %>% 
-      filter(!ensg %in% c(condition_aware_age_cor_filter[, c(base_level, top_level)]$ensg,
-                          gencode_sex_filter.df$gene_id)) %>%
+      filter(!ensg %in% c(gencode_sex_filter.df$gene_id)) %>%
       merge(reference_meta_in %>% select(ensg, gene) %>% distinct(), by = 'ensg')
     
   }
   
   lst('norm_counts.df' = input_set_dds_norm_counts.df,
       'vst_counts.df' = input_set_dds_vst_counts,
-      'age_filter.df' = condition_aware_age_cor_filter,
+      # 'age_filter.df' = condition_aware_age_cor_filter,
       'sex_filter.df' = gencode_sex_filter.df,
       'dds_object' = input_set_dds,
       'de_out' = de_out,
@@ -553,18 +591,111 @@ run.de.seq.individual <- function(type = 'gxi', base_level = 'ctrl',
   
 }
 
-run.pca <- function(input_de, 
-                    identity_color_pal, 
-                    plot_tag = 'A') {
+run.de.seq.split <- function(type = 'gxi',
+                             base_level = 'Healthy donor',
+                             top_level,
+                             input_se,
+                             split,
+                             dds_formula = as.formula('~age+gender+diagnosis'),
+                             ref_type = 'ucsc.rmsk',
+                             reference_meta_in = reference_meta_data$total_tx_to_gene.df) {
+  import::here(.from = 'SummarizedExperiment', colData, assay, rowRanges, assays)
+  import::here(.from = 'DESeq2', .all = T)
+  import::here(.from = 'tibble', lst)
+  
+  if (!"apeglm" %in% rownames(installed.packages())) {
+    BiocManager::install('apeglm', update = FALSE)
+  }
+  
+  scaled_quant_meta_for_de.df <-
+    input_se$quant_meta %>%
+    filter(sample %in% split$sample) %>%
+    mutate(
+      input_vol = as.numeric(input_vol),
+      condition = relevel(as.factor(diagnosis), ref = base_level)
+    ) %>%
+    mutate_if(is.numeric, ~ scale(., center = T)) %>%
+    mutate(across(where(is.character), ~ replace_na(.x, 'none'))) %>%
+    mutate_if(is.character, ~ as.factor(.)) %>%
+    remove_rownames() %>%
+    column_to_rownames('sample')
+  
+  print(levels(scaled_quant_meta_for_de.df$condition))
+  
+  gencode_sex_filter.df <-
+    rowRanges(input_se[[type]]) %>% as.data.frame() %>%
+    filter(seqnames %in% c('chrY'),
+           grepl('ENSG', group_name))
+  
+  count_matrix.df <-
+    assay(input_se[[type]], 'counts') %>%
+    as.data.frame() %>%
+    rownames_to_column('gene') %>%
+    mutate_if(is.numeric, round) %>%
+    column_to_rownames('gene')
+  
+  count_matrix.df <-
+    count_matrix.df[, colnames(count_matrix.df) %in% rownames(scaled_quant_meta_for_de.df)]
+  
+  scaled_quant_meta_for_de.df <-
+    scaled_quant_meta_for_de.df[match(colnames(count_matrix.df),
+                                      rownames(scaled_quant_meta_for_de.df)),]
+  
+  
+  input_set_dds <-
+    DESeqDataSetFromMatrix(countData = count_matrix.df,
+                           colData = scaled_quant_meta_for_de.df,
+                           design = dds_formula)
+  
+  input_set_dds <- estimateSizeFactors(input_set_dds)
+  
+  input_set_dds_norm_counts.df <- as.data.frame(counts(input_set_dds, normalized=T))
+  
+  de_filter <-
+    rowSums(counts(input_set_dds, normalized = T) >= 10) >= ncol(input_set_dds_norm_counts.df) *
+    0.95
+  
+  input_set_dds <- DESeq(input_set_dds[de_filter, ])
+  
+  print(resultsNames(input_set_dds))
+  
+  tail(resultsNames(input_set_dds), n = 1)
+  
+  coef_list <- tail(resultsNames(input_set_dds), n = 1)
+  
+  print(coef_list[[1]])
+  
+  message('ucsc.rmsk')
+
+  de_out <-
+    lfcShrink(input_set_dds, coef = coef_list[[1]]) %>%
+    as.data.frame() %>%
+    filter(padj < 0.01) %>% 
+    rownames()
+  
+  return(de_out)
+  
+}
+
+run.pca <- function(input_de, te_only = FALSE) {
   
   import::here(.from = 'tibble', lst)
   import::here(.from = 'stats', prcomp)
   import::here(.from = 'patchwork', .all = T)
   import::here(.from = 'ggplot2', labs)
   
-  input_de$vst_counts.df[! rownames(input_de$vst_counts.df) %in% 
-                           c(input_de$age_filter.df$ensg,input_de$sex_filter.df$gene_id), ] %>% 
-    t() -> pca_tmp_in 
+  if (te_only == TRUE){
+    
+    input_de$vst_counts.df[ rownames(input_de$vst_counts.df) %in% 
+                             c(reference_meta_data$ucsc_rmsk_insert_info.df$gene), ] %>% 
+      t() -> pca_tmp_in 
+    
+  } else {
+    input_de$vst_counts.df[! rownames(input_de$vst_counts.df) %in% 
+                             c(input_de$age_filter.df$ensg,input_de$sex_filter.df$gene_id), ] %>% 
+      t() -> pca_tmp_in 
+  }
+ 
   
   pca_tmp_in_sd <- apply(pca_tmp_in, 2, sd)
   pca_tmp_in_zero_sd <- pca_tmp_in[,pca_tmp_in_sd!=0]
@@ -582,7 +713,7 @@ run.pca <- function(input_de,
   
   pca.out <- as.data.frame(non_zero_pca$x) %>% 
     rownames_to_column('sample') %>% 
-    merge(input_de$scaled_quant_meta_for_de.df, by = 'sample')
+    merge(input_de$scaled_quant_meta_for_de.df %>% rownames_to_column('sample'), by = 'sample')
   
   pca.out.summary <- 
     as.data.frame(summary(non_zero_pca)$importance) %>% 
@@ -590,64 +721,47 @@ run.pca <- function(input_de,
     gather(pc, value, -metric) %>% 
     spread(metric, value)
   
-  pca.out %>% 
-    ggplot(aes(PC1, PC2,
-               color = condition)) +
-    geom_point(size = rel(1), alpha = 0.8) + 
-    # scale_shape_manual(values = c(21,25)) +
-    xlab(paste('PC1', round(cumsum(pcs.props)[1], digits = 3), sep = ' ')) +
-    ylab(paste('PC2', round(cumsum(pcs.props)[2] - cumsum(pcs.props)[1], digits = 3), sep = ' ')) +
-    geom_vline(xintercept = 0, linetype = 'dotted', alpha = 0.3, size = 0.25) +
-    geom_hline(yintercept = 0, linetype = 'dotted', alpha = 0.3, size = 0.25) + 
-    scale_color_manual(values = identity_color_pal) + 
-    # theme(axis.title.x = element_blank()) +
-    xlim(-200,200) -> pca_1v2.plt
-  
-  pca.out %>% 
-    ggplot(aes(PC2, PC3,
-               color = condition)) +
-    geom_point(size = rel(1), alpha = 0.8) + 
-    # scale_shape_manual(values = c(21,25)) +
-    xlab(paste('PC2', round(cumsum(pcs.props)[2] - cumsum(pcs.props)[1], digits = 3), sep = ' ')) +
-    ylab(paste('PC3', round(cumsum(pcs.props)[3] - cumsum(pcs.props)[2], digits = 3), sep = ' ')) +
-    geom_vline(xintercept = 0, linetype = 'dotted', alpha = 0.3, size = 0.25) +
-    geom_hline(yintercept = 0, linetype = 'dotted', alpha = 0.3, size = 0.25) + 
-    scale_color_manual(values = identity_color_pal) + 
-    ylim(-200,200) -> pca_2v3.plt
-  
-  pca.out %>% 
-    ggplot(aes(PC3, PC4,
-               color = condition)) +
-    geom_point(size = rel(1), alpha = 0.8) + 
-    # scale_shape_manual(values = c(21,25)) +
-    xlab(paste('PC3', round(cumsum(pcs.props)[3] - cumsum(pcs.props)[2], digits = 3), sep = ' ')) +
-    ylab(paste('PC4', round(cumsum(pcs.props)[4] - cumsum(pcs.props)[3], digits = 3), sep = ' ')) +
-    geom_vline(xintercept = 0, linetype = 'dotted', alpha = 0.3, size = 0.25) +
-    geom_hline(yintercept = 0, linetype = 'dotted', alpha = 0.3, size = 0.25) + 
-    scale_color_manual(values = identity_color_pal) + 
-    ylim(-200,200) -> pca_3v4.plt
-  
   lst('pca_out.df' = pca.out,
-      'pca_1v2.plt' = pca_1v2.plt,
-      'pca_2v3.plt' = pca_2v3.plt,
-      'pca_3v4.plt' = pca_3v4.plt)
+      'pca_out' = non_zero_pca,
+      'pc_props' = pcs.props,
+      'summary' = pca.out.summary)
 }
 
 
 extract.meta.pca.correlates <- function(pca.out) {
   
-  Filter(function(x) sd(x) !=0, pca.out %>% select(where(is.numeric))) %>% 
-    cor(method = 'pearson') %>% 
-    as.data.frame() %>% 
-    select(-starts_with('PC')) %>% 
-    rownames_to_column('pc') %>% 
-    filter(grepl('^PC', pc)) %>% 
-    gather(var, cor, -pc) %>% 
-    mutate(pc = as.factor(as.numeric(str_remove(pc, 'PC')))) %>% 
-    filter(pc %in% c(1,2,3)) -> pca_pearson_cor.df
+  pca.out %>%
+    select_if(~ !any(is.na(.))) -> clin_data_pca_corr
   
-  pca_pearson_cor.df
+  clin_data_pca_corr %>%
+    select_if(~ is.numeric(.)) %>%
+    cor(method = 'pearson') %>%
+    as.data.frame() %>%
+    select(-starts_with('PC')) %>%
+    rownames_to_column('pc') %>%
+    filter(grepl('^PC', pc)) %>%
+    gather(var, cor, -pc) %>%
+    mutate(pc = as.factor(as.numeric(str_remove(pc, 'PC')))) %>%
+    filter(pc %in% c(1, 2, 3)) -> corr_out
   
+  lapply(c(1:3), function(pc) {
+    pc <- paste0('PC', pc)
+    
+    vars <- unique(corr_out$var)
+    
+    names(vars) <- vars
+    
+    imap(vars, function(name, var) {
+      cor.test(clin_data_pca_corr[, pc], clin_data_pca_corr[, var])$p.value
+      
+    })
+    
+  }) %>% bind_rows(.id = 'pc') %>%
+    pivot_longer(names_to = 'var',
+                 values_to = 'pval',
+                 cols = -pc) -> cor_test_out
+  
+  cor_test_out %>% merge(corr_out, by = c('pc', 'var'))
   
 }
 
@@ -707,5 +821,121 @@ generate.unsplice.data <- function(analysis_set) {
   
   merge(unsplice.df, splice.df, by = 'sample') %>% 
     mutate(unsplice_rate = unsplice_count / (unsplice_count + splice_count))
+  
+}
+
+load.in.tcga.counts <- function(type) {
+  
+  input_counts %>%
+    mutate(tmp = Name) %>%
+    separate(tmp, sep = '_', into = c(NA,NA,NA,NA,NA,NA,NA,NA,'strand',NA)) %>%
+    mutate(Name = case_when(
+      grepl('ENST', Name) ~ str_split_fixed(string = Name,
+                                            pattern = '\\|', n = 8)[, 1],
+      grepl('hg38', Name) ~ str_split_fixed(string = str_remove(Name, 'hg38_rmsk_'),
+                                            pattern = '_5', n = 2)[, 1]
+    )) -> luad_counts_rename
+  
+  
+  luad_counts_rename <- vroom::vroom(file.path(meta_data.dir, 'LUAD_rename_counts_txi.tsv'))
+  
+  
+  luad_counts_rename <- luad_counts_rename[, colnames(luad_counts_rename) %in%
+                                             c('Name', luad_pheno$sampleID)]
+  
+  rmsk_luad_counts_rename <- filter(luad_counts_rename, grepl('range=', Name))
+  
+  rmsk_luad_counts_rename_filt <-
+    rmsk_luad_counts_rename %>%
+    filter(if_any(where(is.numeric)))
+  
+  rmsk_luad_counts_rename_filt %>%
+    separate(Name, sep = '_', into = c('gene', NA, NA, NA)) -> rmsk_luad_counts_rename_filt
+  
+  rmsk_luad_counts_rename_filt %>%
+    merge(reference_meta_data$ucsc_rmsk_insert_info.df, by = 'gene') -> rmsk_luad_counts_rename_filt
+  
+  rmsk_luad_counts_rename_filt %>%
+    pivot_longer(names_to = 'sample', values_to = 'count',
+                 cols = `LUAD-05-4249-TP`:`LUAD-99-7458-TP`) %>%
+    group_by(gene, sample) %>%
+    summarize(count = sum(count)) %>%
+    distinct() -> rmsk_luad_counts_tx2gene
+  
+  vroom::vroom_write(x = rmsk_luad_counts_tx2gene,
+                     file = file.path(meta_data.dir, 'LUAD_rmsk_tidy_counts_gxi.tsv'))
+  
+  
+  gencode_luad_counts_rename <- filter(luad_counts_rename, grepl('ENST', Name))
+  
+  gencode_luad_counts_rename %>%
+    merge(reference_meta_data$gencode_tx_to_gene.df,
+          by.x = 'Name', by.y = 'enst') -> luad_counts_rename_merge
+  
+  luad_counts_rename_merge %>%
+    pivot_longer(names_to = 'sample', values_to = 'count',
+                 cols = `LUAD-05-4249-TP`:`LUAD-99-7458-TP`) %>%
+    group_by(gene, sample) %>%
+    summarize(count = sum(count)) %>%
+    distinct() -> luad_counts_tx2gene
+  
+  vroom::vroom_write(x = luad_counts_tx2gene, file = file.path(meta_data.dir,
+                                                               'LUAD_gencode_tidy_counts_gxi.tsv'))
+  
+  luad_counts_tx2gene <- vroom::vroom(file.path(meta_data.dir, 'LUAD_tidy_counts_gxi.tsv'))
+  
+  
+  luad_counts_tx2gene %>%
+    pivot_wider(names_from = sample, values_from = count) -> luad_deSeq_count_matrix.df
+  
+  luad_deSeq_count_matrix.df <- vroom::vroom(file = file.path(meta_data.dir,
+                                                              'LUAD_gencode_tidy_counts_gxi.tsv'))
+  
+  
+  
+  bind_rows(luad_deSeq_count_matrix.df, rmsk_luad_counts_tx2gene) -> luad_tidy_counts.df
+  
+  vroom::vroom_write(x = luad_tidy_counts.df, file = file.path(meta_data.dir, 'LUAD_tidy_counts_gxi.tsv'))
+  
+}
+
+matching_rbind <- function(x, y, ...) {
+  # df_list <- list( !!x, eval(y))
+  df_list <- lapply(list(x, y, ...), function(name){
+    if(!is.null(name)){
+      return(get(name))
+    }
+  })
+  
+  names(df_list) <- c(x, y, ...)[!is.na(c(x, y, ...))]
+  
+  Reduce(function(x, y) {
+    intersect(x, names(y))
+  }, df_list, init = names(df_list[[1]])) -> shared_columns
+  
+  lapply(df_list, function(df) {
+    select(df, all_of(shared_columns))
+    
+  }) %>% bind_rows() %>% distinct()
+  
+}
+
+calc_entropy <- function(norm_counts.df, meta_data, grouping_level) {
+  
+  norm_counts.df %>% 
+    rownames_to_column('gene') %>% 
+    merge(reference_meta_data$ucsc_rmsk_insert_info.df, by = 'gene', all.x = T) %>% 
+    mutate(family = ifelse(gene %in% reference_meta_data$gencode_lncRNA_gene_names.df$ensg,
+                           'GENCODE_lncRNA', family),
+           family = ifelse(is.na(family), 'GENCODE_coding', family),
+           clade = ifelse(grepl('GENCODE', family), family, clade),
+           type = ifelse(grepl('GENCODE',family), family, 'TE')) %>% 
+    group_by(!! sym(grouping_level)) %>% 
+    summarize(across(where(is.numeric), ~.x/sum(.x))) %>% 
+    pivot_longer(names_to = 'sample', values_to = 'frequency', cols = where(is.numeric)) %>% 
+    filter(frequency > 0) %>%
+    group_by(sample, !! sym(grouping_level)) %>% 
+    summarize(entropy = -sum((frequency)*log2(frequency))) %>%
+    merge(meta_data, by = 'sample')
   
 }
