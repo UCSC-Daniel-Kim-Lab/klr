@@ -33,7 +33,7 @@ locate_motifs <- function(.data, .y, database, genes_col="obs", background_col="
     }
     else if (class(.data)=="DNAStringSet")
     {
-        if (is.null(.y))
+        if (missing(.y))
         {
             res = try(memes:runAme(
                 .data,
