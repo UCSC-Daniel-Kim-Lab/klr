@@ -19,8 +19,7 @@ gather_repeats <- function(
     {
         if (class(overwrite_filter)=="expression")
         {
-            overwrite = overwrite %>%
-                dplyr::filter(overwrite_filter)
+            overwrite = dplyr::filter(overwrite, overwrite_filter)
 
         } else
         {
@@ -54,29 +53,33 @@ gather_repeats <- function(
                         overwrite[[overwrite_name]] %in% genes
                     )
 
-                    bed = overwrite %>%
+                    bed = dplyr::distinct(
                         dplyr::filter(
-                            eval(subsetter),
-                            classification=reg
-                        ) %>%
-                        dplyr::mutate(
-                            repStop = repStart+repLength, repStrand
-                        ) %>%
-                        tidyr::unite(c(overwrite_id, repName), col="name", sep='_') %>%
-                        tidyr::unite(c(name, repStart), col="instance", sep='_', remove=F) %>%
-                        dplyr::select(
-                            chr=chrom,
-                            start=repStart,
-                            stop=repStop,
-                            strand=repStrand,
-                            name=instance,
-                            gene_strand=genoStrand
-                        ) %>%
-                        dplyr::filter(
+                            dplyr::select(
+                                tidyr::unite(
+                                    tidyr::unite(
+                                        dplyr::mutate(
+                                                dplyr::filter(
+                                                overwrite,
+                                                eval(subsetter),
+                                                classification=reg
+                                            ),
+                                            repStop = repStart+repLength, repStrand
+                                        ),
+                                        c(overwrite_id, repName), col="name", sep='_'
+                                    ),
+                                    (name, repStart), col="instance", sep='_', remove=F
+                                ),
+                                chr=chrom,
+                                start=repStart,
+                                stop=repStop,
+                                strand=repStrand,
+                                name=instance,
+                                gene_strand=genoStrand
+                            ),
                             !str_ends(chr, "_alt")
-                        ) %>%
-                        dplyr::distinct()
-
+                        )
+                    )
                     fasta = Biostrings::getSeq(
                         genome, GenomicRanges::GRanges(bed)
                     )
@@ -107,29 +110,33 @@ gather_repeats <- function(
                     o[[o_id]] %in% genes
                 )
 
-                bed = o %>%
-                    dplyr::filter(
-                        eval(subsetter),
-                        classification==reg
-                    ) %>%
-                    dplyr::mutate(
-                        repStop = repStart+(-1*repLength), repStrand
-                    ) %>%
-                    tidyr::unite(c(o_id, repName), col="name", sep='_') %>%
-                    tidyr::unite(c(name, repStart), col="instance", sep='_', remove=F) %>%
-                    dplyr::select(
-                        chr=chrom,
-                        start=repStart,
-                        stop=repStop,
-                        strand=repStrand,
-                        name=instance,
-                        gene_strand=genoStrand
-                    ) %>%
-                    dplyr::filter(
+                bed = dplyr::distinct(
+                        dplyr::filter(
+                        dplyr::select(
+                            tidyr::unite(
+                                tidyr::unite(
+                                    dplyr::mutate(
+                                        dplyr::filter(
+                                            o,
+                                            eval(subsetter),
+                                            classification==reg
+                                        ),
+                                        repStop = repStart+(-1*repLength), repStrand
+                                    ),
+                                    c(o_id, repName), col="name", sep='_'
+                                ),
+                                c(name, repStart), col="instance", sep='_', remove=F
+                            ),
+                            chr=chrom,
+                            start=repStart,
+                            stop=repStop,
+                            strand=repStrand,
+                            name=instance,
+                            gene_strand=genoStrand
+                        ),
                         !str_ends(chr, "_alt")
-                    ) %>%
-                    dplyr::distinct()
-
+                    )
+                )
                 fasta = Biostrings::getSeq(
                     g, GenomicRanges::GRanges(bed)
                 )
@@ -142,18 +149,24 @@ gather_repeats <- function(
     }
 
     ## Add DNAStringSet to the grouped data
-    groups$res = groups %>%
-        apply(MARGIN=1, FUN=function(row)
-            {seqs_by_row(row$.row, overwrite, genome, id_col, overwrite_name, regions)}
-        )
+    groups$res = apply(groups, MARGIN=1, FUN=function(row)
+        {seqs_by_row(row$.row, overwrite, genome, id_col, overwrite_name, regions)}
+    )
     
     ## Unnest results
-    groups = groups %>%
-        dplyr::select(!c(".rows")) %>%
-        tidyr::unnest_longer(res) %>%
-        dplyr::rename(c(res_id="region", res="genome")) %>%
-        tidyr::unnest_longer(genome) %>%
-        tidyr::pivot_wider(names_from=genome_id, values_from=genome)
+    groups = tidyr::pivot_wider(
+        tidyr::unnest_longer(
+            dplyr::rename(
+                tidyr::unnest_longer(
+                    dplyr::select(groups, !c(".rows")),
+                    res
+                ),
+                c(res_id="region", res="genome")
+            ),
+            genome
+        ),
+        names_from=genome_id, values_from=genome
+    )
 
     return(groups)
 }

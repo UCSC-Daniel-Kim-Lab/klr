@@ -18,11 +18,14 @@ gather_promoters <- function(genes, genome, gtf_file, id_col="gene")
 
     if (is.null(genes))
     {
-        gtf %>%
-            as.data.frame() %>%
-            filter(type="gene") %>%
-            GenomicRanges::GRanges() %>%
-            GenomicRanges::promoters()
+        gtf = GenomicRanges::promoters(
+            GenomicRanges::GRanges(
+                filter(
+                    as.data.frame(gtf),
+                    type=="gene"
+                )
+            )
+        )
         seqnames = gtf$gene_id
         gtf = BioStrings::getSeq(genome, gtf)
         names(gtf) = seqnames
@@ -30,14 +33,15 @@ gather_promoters <- function(genes, genome, gtf_file, id_col="gene")
     }
     else if ("vector" %in% class(genes) | "list" %in% class(genes))
     {
-        gtf %>%
-            as.data.frame() %>%
-            filter(
-                type=="gene",
-                gene_id %in% genes
-            ) %>%
-            GenomicRanges::GRanges() %>%
-            GenomicRanges::promoters()
+        gtf = GenomicRanges::promoters(
+            GenomicRanges::GRanges(
+                filter(
+                    as.data.frame(gtf),
+                    type=="gene",
+                    gene_id=="gene"
+                )
+            )
+        )
         seqnames = gtf$gene_id
         gtf = BioStrings::getSeq(genome, gtf) %>%
         names(gtf) = seqnames
@@ -48,15 +52,15 @@ gather_promoters <- function(genes, genome, gtf_file, id_col="gene")
         if (is.null(attr(genes, 'groups')))
         {
             gene_list = genes[[id_col]]
-
-            gtf %>%
-                as.data.frame() %>%
-                filter(
-                    type=="gene",
-                    gene_id %in% gene_list
-                ) %>%
-                GenomicRanges::GRanges() %>%
-                GenomicRanges::promoters()
+            gtf = GenomicRanges::promoters(
+                GenomicRanges::GRanges(
+                    filter(
+                        as.data.frame(gtf),
+                        type=="gene",
+                        gene_id %in% gene_list
+                    )
+                )
+            )
             seqnames = gtf$gene_id
             gtf = BioStrings::getSeq(genome, gtf)
             names(gtf) = seqnames
@@ -70,11 +74,14 @@ gather_promoters <- function(genes, genome, gtf_file, id_col="gene")
             promoters_by_row = function(group, data, id_col, bed, genome)
             {
                 gene_list = data[[id_col]][group$.rows]
-                bed %>%
-                    as.data.frame() %>%
-                    filter(type=="gene") %>%
-                    GenomicRanges::GRanges() %>%
-                    GenomicRanges::promoters()
+                bed = GenomicRanges::promoters(
+                    GenomicRanges:: GRanges(
+                        filter(
+                            as.data.frame(bed),
+                            type=="gene"
+                        )
+                    )
+                )
                 seqnames = gtf$gene_id
                 bed = BioStrings::getSeq(genome, bed)
                 names(bed) = seqnames
@@ -86,9 +93,7 @@ gather_promoters <- function(genes, genome, gtf_file, id_col="gene")
                 data=genes, id_col=id_col, bed=gtf, genome=genome
             ))
             
-            groups %>%
-                dplyr::select(!c(".rows")) %>%
-                return()
+            return(dplyr::select(groups, !c(".rows")))
         }
     }
 }

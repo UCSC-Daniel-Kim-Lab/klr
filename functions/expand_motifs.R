@@ -11,18 +11,17 @@ expand_motifs <- function(motifs, id_col="motif", var_cols, fimo)
     if (!is.null(fimo)) cols = c(cols, fimo)
     if (!is.null(var_cols)) cols = c(cols, var_cols)
     
-    motifs = motifs %>%
-        dplyr::select(cols) %>%
-        tidyr::unnest(
-            cols=tidyr::matches(id_col)
-        )
+    motifs = tidyr::unnest(
+        dplyr::select(motifs, cols),
+        cols=tidyr::matches(id_col)
+    )
     
     if (!is.null(fimo))
     {
-        motifs = motifs %>%
-            tidyr::unnest_longer(
-                cols=tidyr::matches(fimo)
-            )
+        motifs = tidyr::unnest_longer(
+            motifs,
+            cols=tidyr::matches(fimo)
+        )
     }
 
     return(motifs)

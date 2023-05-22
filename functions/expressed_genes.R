@@ -14,23 +14,30 @@ expressed_genes <- function(
     raw=F, count_threshhold=5, count_freq=0.75, biotyper=NULL,
 )
 {
-    biotypes = tx_to_gene %>%
-        dplyr::select(gene_col, biotype) %>%
-        dplyr::group_by(gene_col) %>%
-        dplyr::mutate(
-            biotype = dplyr::case_when(
-                all(biotype=="lncRNA") ~ "lncRNA",
-                any(biotype=="protein_coding") ~ "protein_coding",
-                .default="remove"
+    biotypes = dplyr::select(
+        dplyr::ungroup(
+            dplyr::distinct(
+                dplyr::filter(
+                    dplyr::mutate(
+                        dplyr::group_by(
+                            dplyr::select(
+                                tx_to_gene,
+                                gene_col, biotype
+                            ),
+                            gene_col
+                        ),
+                        biotype=case_when(
+                            all(biotype=="lncRNA")~"lncRNA",
+                            any(biotype=="protein_coding")~"protein_coding",
+                            .default="remove"
+                        )
+                    ),
+                    biotype!="remove"
+                )
             )
-        ) %>%
-        dplyr::filter(
-            biotype != "remove"
-        ) %>%  
-        dplyr::distinct() %>%
-        dplyr::ungroup() %>%
-        dplyr::select(biotype, gene_col)
-
+        ),
+        biotype, gene_col
+    )
     se = HDF5Array::loadHDF5SummarizedExperiment(h5_path)
     counts = {}
     if (raw)
@@ -41,10 +48,10 @@ expressed_genes <- function(
         counts = SummarizedExperiment::assays(se)$abundance
     }
 
-    genes = rownames(counts[(rowSums(counts >= count_threshhold)) >= ncol(counts)*count_freq, ]) %>%
-        merge(
-            x=data.frame(gene=.), y=biotypes,
-            by.x="gene", by.y=""
+    genes = rownames(counts[(rowSums(counts >= count_threshhold)) >= ncol(counts)*count_freq, ])
+    genes = merge(
+            x=data.frame(gene=genes), y=biotypes,
+            by.x="gene", by.y=gene_col
         )
     return(genes)
 }
